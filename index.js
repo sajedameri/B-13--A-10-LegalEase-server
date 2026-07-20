@@ -1,5 +1,7 @@
 const dotenv = require('dotenv')
 dotenv.config()
+const dns= require("dns")
+dns.setServers(["8.8.8.8","1.1.1.1"])
 
 const express = require('express')
 const cors = require('cors')
@@ -31,14 +33,80 @@ async function run() {
 			res.send(result)
 		})
 
-		app.get('/api/lawyers', async (req, res) => {
+	app.get('/api/lawyers', async (req, res) => {
 			try {
 				const result = await lawyersCollection.find().toArray()
 				res.send(result)
 			} catch (error) {
 				res.status(500).send({ message: error.message })
 			}
-		})
+		})	
+// getFeatured Lawyers
+		app.get('/api/lawyers/featured', async (req, res) => {
+  try {
+    const lawyers = await lawyersCollection
+      .aggregate([
+        {
+          $sample: {
+            size: 6,
+          },
+        },
+      ])
+      .toArray(); 
+
+    res.send(lawyers);
+  } catch (error) {
+    res.status(500).send({
+      message: error.message,
+    });
+  }
+});
+// Top Legal Expert
+app.get("/api/lawyers/top-experts", async (req, res) => {
+  try {
+    const lawyers = await lawyersCollection
+      .find({})
+      .sort({ hireCount: -1 })
+      .limit(3)
+      .toArray();
+
+    res.send(lawyers);
+  } catch (error) {
+    res.status(500).send({
+      message: error.message,
+    });
+  }
+});
+
+// catagory
+app.get("/api/lawyers", async (req, res) => {
+  try {
+    const { category, search } = req.query;
+
+    const query = {};
+
+    if (category) {
+      query.category = category;
+    }
+
+    if (search) {
+      query.name = {
+        $regex: search,
+        $options: "i",
+      };
+    }
+
+    const lawyers = await lawyersCollection.find(query).toArray();
+
+    res.send(lawyers);
+  } catch (error) {
+    res.status(500).send({
+      message: error.message,
+    });
+  }
+});
+
+
 		// Send a ping to confirm a successful connection
 		await client.db('admin').command({ ping: 1 })
 		console.log(
