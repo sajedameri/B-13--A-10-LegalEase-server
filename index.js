@@ -40,7 +40,21 @@ async function run() {
 			} catch (error) {
 				res.status(500).send({ message: error.message })
 			}
-		})	
+		})
+
+    // get api query manege profiel page
+ app.get('/api/lawyers', async(req, res) =>{
+  const query = {};
+  if(req.query.userId){
+    query.userId = req.query.userId;
+  }
+  if(req.query.status){
+    query.status = req.query.status;
+  }
+  const cursor = lawyersCollection.find(query);
+  const result = await cursor.toArray();
+  res.send(result)
+ }) 	
 // getFeatured Lawyers
 		app.get('/api/lawyers/featured', async (req, res) => {
   try {
