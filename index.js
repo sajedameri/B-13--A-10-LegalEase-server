@@ -5,7 +5,7 @@ dns.setServers(["8.8.8.8", "1.1.1.1"]);
 
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -26,12 +26,30 @@ async function run() {
   try {
     const database = client.db("legalease_db");
     const lawyersCollection = database.collection("lawyers");
+    const paymentCollection =database.collection("payment")
 
     app.post("/api/lawyers", async (req, res) => {
       const lawyer = req.body;
       const result = await lawyersCollection.insertOne(lawyer);
       res.send(result);
     });
+    // payment route
+
+    app.post("/api/payment", async(req,res) =>{
+      const {price, userId, title, productId, session_id,email} = req.body;
+      const isExistSession = await paymentCollection.findOne({session_id})
+      if(isExistSession){
+        return res.status(400).send({message:"Session alrady exist"})
+      }
+      const subs_result = await paymentCollection.insertOne({
+       userId,
+       session_id,
+       price:Number(price) ,
+       title,
+       productId,
+      });
+      res.send({subs_result});
+    })
 
     // get api query manege profiel page
     app.get("/api/my/lawyers", async (req, res) => {
@@ -75,6 +93,7 @@ async function run() {
 //     });
 //   }
 // });
+
 
     // getFeatured Lawyers
     app.get("/api/lawyers/featured", async (req, res) => {
@@ -130,6 +149,16 @@ async function run() {
         res.status(500).send({ message: error.message });
       }
     });
+    // get api route id
+    app.get('/api/lawyers/:id', async (req, res) =>{
+  const id = req.params.id;
+  const query = {
+    _id: new ObjectId(id)
+  }
+  
+  const result =await lawyersCollection.findOne(query);
+  res.send(result);
+})
 
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
