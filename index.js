@@ -178,21 +178,74 @@ const userEmail = req.user.email
 });
     // payment route
 
-    app.post("/api/payment", async(req,res) =>{
-      const {price, userId, title, productId, session_id,email} = req.body;
-      const isExistSession = await paymentCollection.findOne({session_id})
-      if(isExistSession){
-        return res.status(400).send({message:"Session alrady exist"})
-      }
-      const subs_result = await paymentCollection.insertOne({
-       userId,
-       session_id,
-       price:Number(price) ,
-       title,
-       productId,
-      });
-      res.send({subs_result});
+    // app.post("/api/payment", async(req,res) =>{
+    //   const {price, userId, title, productId, session_id,email} = req.body;
+    //   const isExistSession = await paymentCollection.findOne({session_id})
+    //   if(isExistSession){
+    //     return res.status(400).send({message:"Session alrady exist"})
+    //   }
+    //   const subs_result = await paymentCollection.insertOne({
+    //    userId,
+    //    session_id,
+    //    price:Number(price) ,
+    //    title,
+    //    productId,
+    //   });
+    //   res.send({subs_result});
+    // });
+    app.post("/api/payment", async (req, res) => {
+  try {
+    const { price, userId, title, productId, session_id, email } = req.body;
+
+    // ১. চেক করা সেশনটি ইতিমধ্যে ডাটাবেজে আছে কি না
+    const isExistSession = await paymentCollection.findOne({ session_id });
+    if (isExistSession) {
+      return res.status(400).send({ message: "Session already exist" });
+    }
+
+    // ২. পেমেন্ট কালেকশনে পেমেন্টের তথ্য সেভ করা
+    const subs_result = await paymentCollection.insertOne({
+      userId,
+      session_id,
+      email,
+      price: Number(price),
+      title,
+      productId, // এটিই মূলত hiringId হিসেবে কাজ করছে
+      createdAt: new Date(),
     });
+
+    // ৩. অত্যন্ত গুরুত্বপূর্ণ: hiringCollection-এ গিয়ে নির্দিষ্ট hiringId এর paymentStatus "paid" করে দেওয়া
+    if (productId) {
+      try {
+        let queryId = productId;
+        try {
+          queryId = new ObjectId(productId);
+        } catch (e) {
+          // যদি স্ট্রিং আইডি হয়
+        }
+
+        await hiringCollection.updateOne(
+          { 
+            $or: [
+              { _id: queryId },
+              { _id: productId }
+            ] 
+          },
+          { 
+            $set: { paymentStatus: "paid" } 
+          }
+        );
+      } catch (err) {
+        console.error("Error updating hiring collection payment status:", err);
+      }
+    }
+
+    res.send({ success: true, subs_result });
+  } catch (error) {
+    console.error("Payment API Error:", error);
+    res.status(500).send({ message: "Internal Server Error" });
+  }
+});
 
     // Get Hiring History for User (by Email)
    
@@ -683,10 +736,9 @@ app.get("/api/lawyers", async (req, res) => {
   }
 });
 
-    app.get("/api/hiring",verifyToken, async (req, res) => {
+app.get("/api/hiring", verifyToken, async (req, res) => {
   try {
     const { email } = req.query;
-    // const{name}=req.query;
 
     if (!email) {
       return res.status(400).send({
@@ -694,13 +746,55 @@ app.get("/api/lawyers", async (req, res) => {
       });
     }
 
-    const result = await hiringCollection
-      .find({ userEmail: email })
-      .toArray();
+    // ১. ইউজারের হিয়ারিং লিস্ট নিয়ে আসা
+    const hirings = await hiringCollection.find({ userEmail: email }).toArray();
+
+    // ২. প্রতিটি হিয়ারিং রেকর্ডের সাথে লয়ারের কালেকশন থেকে নাম ও স্পেশালাইজেশন যুক্ত করা
+    const result = await Promise.all(
+      hirings.map(async (hire) => {
+        let lawyerName = "N/A";
+        let specialization = "General Practice";
+
+        if (hire.lawyerId) {
+          try {
+            let queryId = hire.lawyerId;
+            let objectIdVal = null;
+
+            try {
+              objectIdVal = new ObjectId(hire.lawyerId);
+            } catch (e) {
+              // যদি স্ট্রিং আইডি হয়
+            }
+
+            // ObjectId অথবা String যেকোনো একভাবে ম্যাচ করলেই যেন লয়ার খুঁজে পাওয়া যায়
+            const lawyer = await lawyersCollection.findOne({
+              $or: [
+                ...(objectIdVal ? [{ _id: objectIdVal }] : []),
+                { _id: hire.lawyerId }
+              ]
+            });
+
+            if (lawyer) {
+              // তোমার ডাটাবেজে ফিল্ডের নাম যা থাকতে পারে (name, lawyerName, specialization, category ইত্যাদি) সবগুলোর জন্য চেক করা হলো
+              lawyerName = lawyer.name || lawyer.lawyerName || lawyer.fullName || "N/A";
+              specialization = lawyer.specialization || lawyer.category || lawyer.specialisation || lawyer.role || "General Practice";
+            }
+          } catch (err) {
+            console.error("Error fetching lawyer details:", err);
+          }
+        }
+
+        return {
+          ...hire,
+          lawyerName,
+          specialization,
+        };
+      })
+    );
 
     res.send(result);
   } catch (error) {
-    console.error(error);
+    console.error("Hiring GET Error:", error);
     res.status(500).send({
       message: "Internal Server Error",
     });
@@ -708,6 +802,62 @@ app.get("/api/lawyers", async (req, res) => {
 });
 
 // ১. হায়ারিং হিস্ট্রি পাওয়ার API (টোকেন সিকিউরড)
+
+// app.get("/api/hiring", verifyToken, async (req, res) => {
+//   try {
+//     const { email } = req.query;
+
+//     if (!email) {
+//       return res.status(400).send({
+//         message: "Email is required",
+//       });
+//     }
+
+//     // ১. ইউজারের হিয়ারিং লিস্ট নিয়ে আসা
+//     const hirings = await hiringCollection.find({ userEmail: email }).toArray();
+
+//     // ২. প্রতিটি হিয়ারিং রেকর্ডের সাথে লয়ারের কালেকশন থেকে নাম ও স্পেশালাইজেশন যুক্ত করা
+//     const result = await Promise.all(
+//       hirings.map(async (hire) => {
+//         let lawyerName = "N/A";
+//         let specialization = "General Practice";
+
+//         if (hire.lawyerId) {
+//           try {
+//             let queryId = hire.lawyerId;
+//             try {
+//               queryId = new ObjectId(hire.lawyerId);
+//             } catch (e) {
+//               // যদি স্ট্রিং আইডি হয়
+//             }
+
+//             // লয়ার কালেকশন থেকে লয়ারের তথ্য খোঁজা
+//             const lawyer = await lawyersCollection.findOne({ _id: queryId });
+//             if (lawyer) {
+//               lawyerName = lawyer.name || "N/A";
+//               specialization = lawyer.specialization || lawyer.category || "General Practice";
+//             }
+//           } catch (err) {
+//             console.error("Error fetching lawyer details:", err);
+//           }
+//         }
+
+//         return {
+//           ...hire,
+//           lawyerName,
+//           specialization, // ফ্রন্টএন্ডে রেন্ডার করার জন্য পাঠানো হচ্ছে
+//         };
+//       })
+//     );
+
+//     res.send(result);
+//   } catch (error) {
+//     console.error(error);
+//     res.status(500).send({
+//       message: "Internal Server Error",
+//     });
+//   }
+// });
 app.get("/api/hiring-requests/:lawyerId", verifyToken, async (req, res) => {
   try {
     const { lawyerId } = req.params;
