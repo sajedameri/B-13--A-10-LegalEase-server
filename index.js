@@ -34,6 +34,7 @@ const client = new MongoClient(uri, {
     const hiringCollection = database.collection("hiring");
     const usersCollection = database.collection("user")
     const sessionCollection = database.collection('session');
+    const adminCollection = database.collection('admin');
 
 
 // const verifyToken = (req, res, next) => {
@@ -70,7 +71,7 @@ const verifyToken = async (req, res, next) => {
     }
 
     const token = authHeader.split(' ')[1]
-
+console.log(token)
     if (!token) {
         return res.status(401).send({ message: 'unauthorized access' })
     }
@@ -93,6 +94,7 @@ const verifyToken = async (req, res, next) => {
     if (!user) {
         return res.status(401).send({ message: 'unauthorized access' })
     }
+    console.log(user)
     // set data in the req object
     req.user = user;
     next();
@@ -151,7 +153,7 @@ const userEmail = req.user.email
       lawyerId: new ObjectId(lawyerId),
       fee: Number(fee),
       status: "pending",
-      lawyerName: lawyer.name,
+     
       paymentStatus: "unpaid",
       createdAt: new Date(),
     };
@@ -195,34 +197,277 @@ const userEmail = req.user.email
     // Get Hiring History for User (by Email)
    
     // Update User Profile Route
-app.put("/api/users/profile",  verifyToken, async (req, res) => {
+// app.put("/api/users/profile",  verifyToken, async (req, res) => {
+//   try {
+//     const email = req.user.email;
+//     const { name, image } = req.body;
+
+//     const updateDoc = {
+//       $set: {
+//         name: name,
+//         image: image,
+//         updatedAt: new Date()
+//       }
+//     };
+
+//     // যদি আপনার ডেটাবেজে users কালেকশন থাকে
+//     const result = await usersCollection.updateOne({ email: email }, updateDoc);
+
+//     res.status(200).json({
+//       success: true,
+//       message: "Profile updated successfully",
+//       result
+//     });
+//   } catch (error) {
+//     console.error("Profile Update Error:", error);
+//     res.status(500).json({
+//       success: false,
+//       message: "Failed to update profile",
+//       error: error.message
+//     });
+//   }
+// });
+
+// const { ObjectId } = require('mongodb');
+
+
+app.get("/api/users",  async (req, res) => {
   try {
-    const email = req.user.email;
-    const { name, image } = req.body;
+    
+    const users = await usersCollection.find().toArray();
+    res.status(200).json({ success: true, users });
+  } catch (error) {
+    console.error("Fetch Users Error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch users", error: error.message });
+  }
+});
+
+
+app.patch("/api/users/role/:id",  async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const { role } = req.body; 
+
+    const filter = { _id: new ObjectId(userId) };
+    const updateDoc = {
+      $set: { role: role }
+    };
+
+    const result = await usersCollection.updateOne(filter, updateDoc);
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.status(200).json({ success: true, message: "User role updated successfully" });
+  } catch (error) {
+    console.error("Update Role Error:", error);
+    res.status(500).json({ success: false, message: "Failed to update role", error: error.message });
+  }
+});
+
+// ৩. ইউজার ডিলিট করার জন্য (DELETE API)
+app.delete("/api/users/:id",  async (req, res) => {
+  try {
+    const userId = req.params.id;
+
+    const query = { _id: new ObjectId(userId) };
+    const result = await usersCollection.deleteOne(query);
+
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    res.status(200).json({ success: true, message: "User deleted successfully" });
+  } catch (error) {
+    console.error("Delete User Error:", error);
+    res.status(500).json({ success: false, message: "Failed to delete user", error: error.message });
+  }
+});
+
+// সব ট্রানজেকশন ফেচ করার জন্য GET API
+// সব ট্রানজেকশন বা পেমেন্ট ফেচ করার জন্য GET API
+// সব ট্রানজেকশন বা পেমেন্ট ফেচ করার জন্য GET API
+app.get("/api/transactions", async (req, res) => {
+  try {
+    // পেমেন্ট কালেকশন থেকে সব ট্রানজেকশন নিয়ে আসা
+    const payments = await paymentCollection.find().toArray();
+
+    const transactions = await Promise.all(
+      payments.map(async (payment) => {
+        let userEmail = "N/A";
+        const targetId = payment.userId || payment.lawyerId; // userId বা lawyerId যেকোনো একটি হতে পারে
+
+        if (targetId) {
+          try {
+            let queryId = targetId;
+            // যদি _id অবজেক্ট আইডি হয়
+            try {
+              queryId = new ObjectId(targetId);
+            } catch (e) {
+              // সাধারণ স্ট্রিং হলে পরিবর্তন করার দরকার নেই
+            }
+
+            // প্রথমে userCollection এ খোঁজা
+            let person = await usersCollection.findOne({ _id: queryId });
+            
+            // যদি user না পাওয়া যায়, তবে lawyerCollection এ খোঁজা (যদি তোমার কালেকশন থাকে)
+            if (!person && typeof lawyersCollection !== "undefined") {
+              person = await lawyersCollection.findOne({ _id: queryId });
+            }
+
+            // বিকল্প হিসেবে স্ট্রিং আইডি দিয়ে চেক করা
+            if (!person) {
+              person = await usersCollection.findOne({ _id: targetId });
+              if (!person && typeof lawyersCollection !== "undefined") {
+                person = await lawyersCollection.findOne({ _id: targetId });
+              }
+            }
+
+            if (person && person.email) {
+              userEmail = person.email;
+            }
+          } catch (err) {
+            console.error("Error finding user/lawyer email:", err);
+          }
+        }
+
+        return {
+          _id: payment._id,
+          transactionId: payment.session_id || payment.transactionId || payment._id,
+          userEmail: userEmail,
+          amount: payment.price || payment.amount || 0,
+          date: payment.date || payment.createdAt || new Date(),
+        };
+      })
+    );
+
+    res.status(200).json({ success: true, transactions });
+  } catch (error) {
+    console.error("Fetch Transactions Error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch transactions", error: error.message });
+  }
+});
+
+// Analytics Overview API Route
+app.get("/api/admin/analytics", async (req, res) => {
+  try {
+    // ১. মোট ইউজার সংখ্যা (usersCollection)
+    const totalUsers = await usersCollection.countDocuments();
+
+    // ২. মোট লয়ার সংখ্যা (lawyersCollection)
+    const totalLawyers = await lawyersCollection.countDocuments();
+
+    // ৩. মোট হায়ার সংখ্যা (hiringCollection)
+    const totalHires = await hiringCollection.countDocuments();
+
+    // ৪. মোট রেভিনিউ হিসাব (paymentCollection থেকে price বা amount যোগ করে)
+    const payments = await paymentCollection.find().toArray();
+    const totalRevenue = payments.reduce((sum, payment) => {
+      const amt = Number(payment.price || payment.amount || 0);
+      return sum + (isNaN(amt) ? 0 : amt);
+    }, 0);
+
+    res.status(200).json({
+      success: true,
+      analytics: {
+        totalUsers,
+        totalLawyers,
+        totalHires,
+        totalRevenue,
+      },
+    });
+  } catch (error) {
+    console.error("Fetch Analytics Error:", error);
+    res.status(500).json({ success: false, message: "Failed to fetch analytics data", error: error.message });
+  }
+});
+
+// PATCH: /api/hiring-requests/:id
+app.patch('/api/hiring-requests/:id', async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const { status } = req.body;
+
+    // ১. স্ট্যাটাস সঠিক আছে কিনা চেক করুন (accepted বা rejected)
+    if (!["accepted", "rejected"].includes(status)) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Invalid status value. Use 'accepted' or 'rejected'." 
+      });
+    }
+
+    // ২. ডেটাবেজে নির্দিষ্ট আইডি দিয়ে রিকোয়েস্ট খুঁজে স্ট্যাটাস আপডেট করুন
+    const query = { _id: new ObjectId(requestId) }; // যদি আপনার আইডি ObjectId ফরম্যাটের হয়
+    // অথবা আইডি যদি স্ট্রিং হয়: const query = { _id: requestId };
 
     const updateDoc = {
       $set: {
-        name: name,
-        image: image,
+        status: status,
         updatedAt: new Date()
       }
     };
 
-    // যদি আপনার ডেটাবেজে users কালেকশন থাকে
-    const result = await usersCollection.updateOne({ email: email }, updateDoc);
+    const result = await hiringCollection.updateOne(query, updateDoc);
 
-    res.status(200).json({
-      success: true,
-      message: "Profile updated successfully",
-      result
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Hiring request not found." 
+      });
+    }
+
+    res.status(200).json({ 
+      success: true, 
+      message: `Hiring request ${status} successfully`,
+      result 
     });
+
   } catch (error) {
-    console.error("Profile Update Error:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update profile",
-      error: error.message
+    console.error("Error updating hiring status:", error);
+    res.status(500).json({ 
+      success: false, 
+      message: "Internal server error" 
     });
+  }
+});
+// POST: /api/reviews (অথবা /api/comments)
+// POST: /api/reviews
+app.post('/api/reviews', async (req, res) => {
+  try {
+    const { lawyerId, userEmail, rating, comment } = req.body;
+
+    // ১. চেক করুন এই ইউজার এই লয়ারকে হায়ার করেছে কি না
+    const hiringRecord = await hiringCollection.findOne({
+      clientEmail: userEmail,
+      lawyerId: lawyerId,
+      status: "approved" // বা আপনার অ্যাপ্রুভড স্ট্যাটাস
+    });
+
+    if (!hiringRecord) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "You must hire this lawyer before leaving a review." 
+      });
+    }
+
+    // ২. একই হায়ারিং রেকর্ডের ভেতরেই রিভিউ বা কমেন্ট আপডেট করে দিন
+    const updateResult = await hiringCollection.updateOne(
+      { _id: hiringRecord._id },
+      { 
+        $set: { 
+          rating: Number(rating),
+          comment: comment,
+          reviewedAt: new Date()
+        } 
+      }
+    );
+
+    res.status(200).json({ success: true, message: "Review added to your hiring record!" });
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ success: false, message: "Internal server error" });
   }
 });
 
@@ -375,7 +620,7 @@ app.delete("/api/comments/:id",  verifyToken, async (req, res) => {
     //     const total_data = await lawyersCollection.countDocuments()
     //     const total_page = Math.ceil(total_data/limit)
     //     const skip = (page - 1)* limit
-    //     const result = await lawyersCollection.find().skip(skip).limit(limit).toArray();
+    //     const data= await lawyersCollection.find().skip(skip).limit(limit).toArray();
     //     const { category, search } = req.query;
     //     const query = {};
     //     if (category) {
@@ -384,41 +629,48 @@ app.delete("/api/comments/:id",  verifyToken, async (req, res) => {
     //     if (search) {
     //       query.name = { $regex: search, $options: "i" };
     //     }
-    //     const lawyers = await lawyersCollection.find(query).toArray();
-    //   res.send(layers);
+    //     // const lawyers = await lawyersCollection.find(query).toArray();
+    //   res.send({total_page, skip, page, data});
     //   } catch (error) {
     //     res.status(500).send({ error });
     //   }
     // });
 
-    // api pasinetion added
-    app.get("/api/lawyers", async (req, res) => {
+app.get("/api/lawyers", async (req, res) => {
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
-    // ১. প্রথমে কুয়েরি অবজেক্ট তৈরি করুন
+    // ১. কুয়েরি অবজেক্ট তৈরি
     const query = {};
-    if (req.query.category) {
-      query.category = req.query.category;
-    }
-    if (req.query.search) {
-      query.name = { $regex: req.query.search, $options: "i" };
+    
+    // ক্যাটাগরি বা স্পেশিয়ালাইজেশন ফিল্টার (যদি "all" না হয়)
+    if (req.query.category && req.query.category !== "all") {
+      // ডেটাবেজে ফিল্ডের নাম যদি specialization হয়, তবে এখানে specialization ব্যবহার করতে হবে
+      query.specialization = req.query.category; 
     }
 
-    // ২. ফিল্টার করা ডেটার ওপর ভিত্তি করে মোট ডেটা এবং পেজ হিসাব করুন
+    // সার্চ ফিল্টার (নাম বা স্পেশিয়ালাইজেশন উভয়ক্ষেত্রেই খোঁজ করার সুবিধা দিতে পারো)
+    if (req.query.search) {
+      query.$or = [
+        { name: { $regex: req.query.search, $options: "i" } },
+        { specialization: { $regex: req.query.search, $options: "i" } }
+      ];
+    }
+
+    // ২. ফিল্টার করা ডেটার ওপর ভিত্তি করে মোট ডেটা এবং পেজ হিসাব
     const total_data = await lawyersCollection.countDocuments(query);
     const total_page = Math.ceil(total_data / limit);
 
-    // ৩. ফিল্টার, স্কিপ ও লিমি트 সহ ডেটা ফেচ করুন
+    // ৩. ফিল্টার, স্কিপ ও লিমিট সহ ডেটা ফেচ
     const lawyers = await lawyersCollection
       .find(query)
       .skip(skip)
       .limit(limit)
       .toArray();
 
-    // ৪. ডেটা ও পেজিনেশন ইনফো একসাথে পাঠAও
+    // ৪. ডেটা ও পেজিনেশন ইনফো পাঠানো
     res.send({
       lawyers,
       total_data,
@@ -431,11 +683,10 @@ app.delete("/api/comments/:id",  verifyToken, async (req, res) => {
   }
 });
 
-
     app.get("/api/hiring",verifyToken, async (req, res) => {
   try {
     const { email } = req.query;
-    const{name}=req.query;
+    // const{name}=req.query;
 
     if (!email) {
       return res.status(400).send({
@@ -453,6 +704,35 @@ app.delete("/api/comments/:id",  verifyToken, async (req, res) => {
     res.status(500).send({
       message: "Internal Server Error",
     });
+  }
+});
+
+// ১. হায়ারিং হিস্ট্রি পাওয়ার API (টোকেন সিকিউরড)
+app.get("/api/hiring-requests/:lawyerId", verifyToken, async (req, res) => {
+  try {
+    const { lawyerId } = req.params;
+    const requests = await hiringCollection.find({ lawyerId: new ObjectId(lawyerId) }).toArray();
+    res.send(requests);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Internal Server Error", error });
+  }
+});
+
+// ২. স্ট্যাটাস আপডেট করার API (টোকেন সিকিউরড)
+app.patch("/api/hiring-status/:id", verifyToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body; // "accepted" বা "rejected"
+
+    const filter = { _id: new ObjectId(id) };
+    const updateDoc = { $set: { status: status } };
+
+    const result = await hiringCollection.updateOne(filter, updateDoc);
+    res.send(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ message: "Failed to update status", error });
   }
 });
     // get api route id
